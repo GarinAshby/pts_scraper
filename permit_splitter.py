@@ -29,6 +29,7 @@ Usage:
 import argparse
 import os
 import re
+import shutil
 import sys
 
 import cv2
@@ -45,11 +46,106 @@ from reportlab.pdfgen import canvas
 # CONFIGURATION
 # ──────────────────────────────────────────────────────────────────────────────
 
-# If Tesseract is not on your PATH, set the full path to the executable here.
-# Examples:
-#   Windows: r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-#   macOS/Linux: "/usr/local/bin/tesseract"  (usually not needed if installed via brew/apt)
-TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"  # use system PATH
+def _bundle_root() -> str | None:
+    """
+    Return the runtime root directory when running inside a PyInstaller
+    bundle (.app on macOS, .exe folder on Windows). Returns None when
+    running from source.
+    """
+    if getattr(sys, "frozen", False):
+        # PyInstaller sets _MEIPASS to the extracted resource dir.
+        return getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    return None
+
+
+def _detect_tesseract() -> str:
+    """
+    Locate the tesseract executable.
+
+    Order:
+      1. Bundled binary inside the frozen app (Contents/Frameworks on macOS)
+      2. System PATH
+      3. Known install locations (Homebrew, Linux package mgrs, Windows)
+    Returns "" to let pytesseract fall back to its own default.
+    """
+    bundle = _bundle_root()
+    if bundle:
+        for rel in ("tesseract/tesseract", "tesseract/tesseract.exe"):
+            candidate = os.path.join(bundle, rel)
+            if os.path.isfile(candidate):
+                return candidate
+
+    found = shutil.which("tesseract")
+    if found:
+        return found
+
+    candidates = [
+        "/opt/homebrew/bin/tesseract",   # Apple Silicon Homebrew
+        "/usr/local/bin/tesseract",      # Intel Homebrew / common Linux
+        "/usr/bin/tesseract",            # Linux package managers
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def _detect_tessdata_dir() -> str | None:
+    """Locate the tessdata directory (OCR language data). Bundle first, else system."""
+    bundle = _bundle_root()
+    if bundle:
+        candidate = os.path.join(bundle, "tessdata")
+        if os.path.isdir(candidate):
+            return candidate
+    for path in (
+        "/opt/homebrew/share/tessdata",
+        "/usr/local/share/tessdata",
+        "/usr/share/tessdata",
+        "/usr/share/tesseract-ocr/4.00/tessdata",
+    ):
+        if os.path.isdir(path):
+            return path
+    return None
+
+
+def _detect_poppler_path() -> str | None:
+    """
+    Locate the Poppler bin directory containing pdftoppm.
+    Returns None when Poppler is on PATH (so pdf2image picks it up itself).
+    """
+    bundle = _bundle_root()
+    if bundle:
+        candidate = os.path.join(bundle, "poppler")
+        if os.path.isdir(candidate) and (
+            os.path.isfile(os.path.join(candidate, "pdftoppm"))
+            or os.path.isfile(os.path.join(candidate, "pdftoppm.exe"))
+        ):
+            return candidate
+
+    if shutil.which("pdftoppm"):
+        return None
+
+    candidates = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        r"C:\Program Files\poppler\poppler-25.12.0\Library\bin",
+    ]
+    for path in candidates:
+        if os.path.isfile(os.path.join(path, "pdftoppm")) or \
+           os.path.isfile(os.path.join(path, "pdftoppm.exe")):
+            return path
+    return None
+
+
+TESSERACT_CMD = _detect_tesseract()
+TESSDATA_DIR  = _detect_tessdata_dir()
+POPPLER_PATH  = _detect_poppler_path()
+
+# When using a bundled tessdata, point tesseract at it via env var.
+if TESSDATA_DIR and _bundle_root():
+    os.environ["TESSDATA_PREFIX"] = TESSDATA_DIR
 
 # DPI for rasterizing PDF pages. Higher = more accurate OCR and contour detection.
 PDF_RENDER_DPI = 300
@@ -82,7 +178,10 @@ def load_pdf_as_images(pdf_path: str) -> list[Image.Image]:
         List of PIL Images, one per page.
     """
     print(f"[load] Reading PDF: {pdf_path}")
-    pages = convert_from_path(pdf_path, dpi=PDF_RENDER_DPI, poppler_path=r"C:\Program Files\poppler\poppler-25.12.0\Library\bin")
+    convert_kwargs = {"dpi": PDF_RENDER_DPI}
+    if POPPLER_PATH:
+        convert_kwargs["poppler_path"] = POPPLER_PATH
+    pages = convert_from_path(pdf_path, **convert_kwargs)
     print(f"[load] Found {len(pages)} page(s).")
     return pages
 

@@ -22,8 +22,8 @@ from core.file_guard import any_pdfs_exist
 from core.runner import run_pipeline
 
 # ── Brand colors ──
-UT_ORANGE    = "#BF5700"
-UT_ORANGE_DK = "#A04800"
+UT_ORANGE    = "#CC5500"
+UT_ORANGE_DK = "#A84600"
 WHITE        = "#FFFFFF"
 OFF_WHITE    = "#F9F6F2"
 CHARCOAL     = "#1A1A1A"
@@ -198,7 +198,11 @@ class EventNameScreen(tk.Frame):
         self.btn.pack(side="right")
 
     def _submit(self):
-        name = self.master.event_name.get().strip()
+        # Read directly from the Entry widget. On macOS with tkinterdnd2,
+        # the textvariable → StringVar binding silently drops user input,
+        # so .get() on the StringVar returns "" even after typing.
+        name = self.entry.get().strip()
+        self.master.event_name.set(name)  # keep StringVar in sync for screen 2
         valid, error_msg = validate_event_name(name)
 
         if not valid:
@@ -242,11 +246,8 @@ class PDFDropScreen(tk.Frame):
         # ── Back + title ──
         nav = tk.Frame(self, bg=OFF_WHITE, pady=20)
         nav.pack(fill="x", padx=40)
-        tk.Button(
+        _OrangeButton(
             nav, text="← Back",
-            bg=OFF_WHITE, fg=MID_GRAY,
-            font=("Helvetica", 9),
-            relief="flat", cursor="hand2",
             command=self.master.show_event_screen,
         ).pack(side="left")
 
@@ -489,11 +490,8 @@ class ProgressScreen(tk.Frame):
             btn_row = tk.Frame(self.result_frame, bg=OFF_WHITE)
             btn_row.pack(fill="x")
 
-            tk.Button(
+            _OrangeButton(
                 btn_row, text="← Process Another",
-                bg=OFF_WHITE, fg=MID_GRAY,
-                font=("Helvetica", 10),
-                relief="flat", cursor="hand2",
                 command=self.master.show_event_screen,
             ).pack(side="left")
 
@@ -533,11 +531,8 @@ class ProgressScreen(tk.Frame):
             btn_row = tk.Frame(self.result_frame, bg=OFF_WHITE, pady=10)
             btn_row.pack(fill="x")
 
-            tk.Button(
+            _OrangeButton(
                 btn_row, text="← Start Over",
-                bg=OFF_WHITE, fg=MID_GRAY,
-                font=("Helvetica", 10),
-                relief="flat", cursor="hand2",
                 command=self.master.show_event_screen,
             ).pack(side="left")
 
@@ -550,26 +545,77 @@ class ProgressScreen(tk.Frame):
 # SHARED WIDGET — Orange Button
 # ══════════════════════════════════════════════════════════════════════════════
 
-class _OrangeButton(tk.Button):
-    """Reusable UT burnt orange button with hover effect."""
+class _OrangeButton(tk.Frame):
+    """
+    Reusable burnt-orange button. Built from a Frame + Label rather than
+    tk.Button because macOS Aqua ignores bg/fg on tk.Button and paints its
+    own native chrome — we need the colour to actually render.
+    """
 
     def __init__(self, master, text, command, state="normal", **kwargs):
         super().__init__(
             master,
-            text=text,
-            command=command,
-            state=state,
             bg=UT_ORANGE,
-            fg=WHITE,
-            activebackground=UT_ORANGE_DK,
-            activeforeground=WHITE,
-            disabledforeground="#DDDDDD",
-            font=("Helvetica", 11, "bold"),
-            relief="flat",
+            highlightthickness=0,
             cursor="hand2",
-            padx=20,
-            pady=8,
             **kwargs,
         )
-        self.bind("<Enter>", lambda e: self.config(bg=UT_ORANGE_DK) if str(self["state"]) != "disabled" else None)
-        self.bind("<Leave>", lambda e: self.config(bg=UT_ORANGE) if str(self["state"]) != "disabled" else None)
+        self._command = command
+        self._state = state
+        self._label = tk.Label(
+            self,
+            text=text,
+            bg=UT_ORANGE,
+            fg=WHITE,
+            font=("Helvetica", 11, "bold"),
+            padx=20,
+            pady=8,
+            cursor="hand2",
+        )
+        self._label.pack(fill="both", expand=True)
+
+        for w in (self, self._label):
+            w.bind("<Button-1>", self._on_click)
+            w.bind("<Enter>",   self._on_enter)
+            w.bind("<Leave>",   self._on_leave)
+
+        if state == "disabled":
+            self.config(state="disabled")
+
+    def _on_click(self, _event):
+        if self._state == "disabled":
+            return
+        if self._command is not None:
+            self._command()
+
+    def _set_bg(self, color):
+        super().configure(bg=color)
+        self._label.configure(bg=color)
+
+    def _on_enter(self, _event):
+        if self._state == "disabled":
+            return
+        self._set_bg(UT_ORANGE_DK)
+
+    def _on_leave(self, _event):
+        if self._state == "disabled":
+            return
+        self._set_bg(UT_ORANGE)
+
+    def configure(self, cnf=None, **kwargs):  # type: ignore[override]
+        # Accept both dict-positional and **kwargs forms (Tkinter uses both).
+        if cnf is not None:
+            kwargs = {**cnf, **kwargs}
+        if "state" in kwargs:
+            self._state = kwargs.pop("state")
+            disabled = self._state == "disabled"
+            self._label.configure(fg="#DDDDDD" if disabled else WHITE)
+            self._set_bg(UT_ORANGE_DK if disabled else UT_ORANGE)
+            cursor = "" if disabled else "hand2"
+            super().configure(cursor=cursor)
+            self._label.configure(cursor=cursor)
+        if "text" in kwargs:
+            self._label.configure(text=kwargs.pop("text"))
+        if kwargs:
+            super().configure(**kwargs)
+    config = configure

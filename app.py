@@ -30,6 +30,7 @@ from ui.main_window import PermitApp
 
 
 def main():
+    app = None
     if _use_dnd:
         # Patch PermitApp to inherit from TkinterDnD.Tk for DnD support
         import tkinter as tk
@@ -54,8 +55,14 @@ def main():
                 self._current_frame = None
                 self.show_event_screen()
 
-        app = DnDPermitApp()
-    else:
+        try:
+            app = DnDPermitApp()
+        except Exception as e:
+            # tkinterdnd2 sometimes fails to initialise on macOS; fall back.
+            print(f"[app] DnD init failed ({e}); falling back to browse-only mode.")
+            app = None
+
+    if app is None:
         app = PermitApp()
 
     app.mainloop()

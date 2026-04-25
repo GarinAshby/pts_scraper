@@ -23,16 +23,21 @@ _FORBIDDEN_NAMES_WINDOWS = {
 def get_permits_folder() -> str:
     """
     Returns the absolute path to the 'permits' folder.
-    In production (.exe), this is the folder containing the executable.
-    In development, this is the folder containing app.py.
+    In production (Windows .exe): the folder containing the executable.
+    In production (macOS .app):    the folder *containing* the .app bundle,
+                                   so output appears beside it in Finder.
+    In development:                the project root (containing app.py).
     """
     if getattr(sys, "frozen", False):
-        # Running as a PyInstaller .exe
         base = os.path.dirname(sys.executable)
+        # Inside a macOS .app, sys.executable is at .app/Contents/MacOS/<bin>.
+        # Walk up out of the bundle so output lands next to the .app, not
+        # buried inside Contents/MacOS/.
+        if sys.platform == "darwin" and base.endswith(os.path.join("Contents", "MacOS")):
+            base = os.path.dirname(os.path.dirname(os.path.dirname(base)))
     else:
-        # Running as a Python script
         base = os.path.dirname(os.path.abspath(__file__))
-        base = os.path.dirname(base)  # go up from core/ to permit_app/
+        base = os.path.dirname(base)  # go up from core/ to project root
     return base
 
 
